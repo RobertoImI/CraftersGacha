@@ -8,6 +8,8 @@ import net.minecraft.resources.RegistryOps;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.storage.LevelResource;
 import org.crafterscr.craftersgacha.CraftersGacha;
 
@@ -144,6 +146,13 @@ public final class GachaManager {
         return removed;
     }
 
+    /**
+     * Vincula un cofre o barril con un Gacha.
+     *
+     * En un double chest guardamos una sola asociación para las dos mitades.
+     * La posición elegida es determinista, de modo que hacer click en cualquiera
+     * de las dos partes siempre resuelva al mismo Gacha.
+     */
     public void setChest(
             ServerLevel level,
             net.minecraft.core.BlockPos pos,
@@ -154,48 +163,157 @@ public final class GachaManager {
         String dimension =
                 level.dimension().location().toString();
 
+        net.minecraft.core.BlockPos connected =
+                getConnectedChestPos(
+                        level,
+                        pos
+                );
+
+        /*
+         * Limpia asociaciones antiguas de cualquiera de las dos mitades.
+         * Esto también migra de forma natural cofres dobles creados antes
+         * de este parche cuando el admin vuelve a asignarlos.
+         */
+        chestLinks.remove(
+                chestKey(
+                        dimension,
+                        pos
+                )
+        );
+
+        if (connected != null) {
+            chestLinks.remove(
+                    chestKey(
+                            dimension,
+                            connected
+                    )
+            );
+        }
+
+        net.minecraft.core.BlockPos storagePos =
+                getCanonicalChestPos(
+                        level,
+                        pos
+                );
+
         GachaChestLink link =
                 new GachaChestLink(
                         dimension,
-                        pos.immutable(),
+                        storagePos.immutable(),
                         gachaId
                 );
 
         chestLinks.put(
-                chestKey(dimension, pos),
+                chestKey(
+                        dimension,
+                        storagePos
+                ),
                 link
         );
 
         save();
     }
 
+    /**
+     * Busca un Gacha asociado a un bloque.
+     *
+     * Si el bloque es una mitad de un double chest también revisa
+     * automáticamente la otra mitad. Gracias a esto:
+     *
+     * - ambas mitades abren el mismo Gacha;
+     * - ambas mitades quedan protegidas;
+     * - datos creados antes del parche siguen funcionando.
+     */
     public GachaChestLink getChest(
             ServerLevel level,
             net.minecraft.core.BlockPos pos
     ) {
-        return chestLinks.get(
-                chestKey(
-                        level.dimension().location().toString(),
-                        pos
-                )
-        );
-    }
+        String dimension =
+                level.dimension().location().toString();
 
-    public GachaChestLink removeChest(
-            ServerLevel level,
-            net.minecraft.core.BlockPos pos
-    ) {
-        GachaChestLink removed =
-                chestLinks.remove(
+        GachaChestLink direct =
+                chestLinks.get(
                         chestKey(
-                                level.dimension().location().toString(),
+                                dimension,
                                 pos
                         )
                 );
 
-        if (removed != null) {
-            save();
+        if (direct != null) {
+            return direct;
         }
+
+        net.minecraft.core.BlockPos connected =
+                getConnectedChestPos(
+                        level,
+                        pos
+                );
+
+        if (connected == null) {
+            return null;
+        }
+
+        return chestLinks.get(
+                chestKey(
+                        dimension,
+                        connected
+                )
+        );
+    }
+
+    /**
+     * Elimina la asociación completa de un cofre.
+     *
+     * En double chest se limpian las dos posiciones para impedir que
+     * quede una mitad huérfana vinculada al Gacha.
+     */
+    public GachaChestLink removeChest(
+            ServerLevel level,
+            net.minecraft.core.BlockPos pos
+    ) {
+        String dimension =
+                level.dimension().location().toString();
+
+        GachaChestLink removed =
+                getChest(
+                        level,
+                        pos
+                );
+
+        if (removed == null) {
+            return null;
+        }
+
+        net.minecraft.core.BlockPos connected =
+                getConnectedChestPos(
+                        level,
+                        pos
+                );
+
+        chestLinks.remove(
+                chestKey(
+                        dimension,
+                        removed.pos()
+                )
+        );
+
+        chestLinks.remove(
+                chestKey(
+                        dimension,
+                        pos
+                )
+        );
+
+        if (connected != null) {
+            chestLinks.remove(
+                    chestKey(
+                            dimension,
+                            connected
+                    )
+            );
+        }
+
+        save();
 
         return removed;
     }
@@ -214,6 +332,75 @@ public final class GachaManager {
         chestLinks.clear();
 
         load();
+    }
+
+    /**
+     * Devuelve la otra mitad de un double chest.
+     *
+     * Para cofres simples, barriles u otros bloques devuelve null.
+     */
+    private static net.minecraft.core.BlockPos getConnectedChestPos(
+            ServerLevel level,
+            net.minecraft.core.BlockPos pos
+    ) {
+        var state =
+                level.getBlockState(pos);
+
+        if (!(state.getBlock() instanceof ChestBlock)
+                || !state.hasProperty(ChestBlock.TYPE)
+                || state.getValue(ChestBlock.TYPE) == ChestType.SINGLE) {
+
+            return null;
+        }
+
+        net.minecraft.core.BlockPos connected =
+                pos.relative(
+                        ChestBlock.getConnectedDirection(
+                                state
+                        )
+                );
+
+        /*
+         * Validación defensiva: solamente aceptamos la posición vecina
+         * si realmente continúa siendo un cofre.
+         */
+        if (!(level
+                .getBlockState(connected)
+                .getBlock()
+                instanceof ChestBlock)) {
+
+            return null;
+        }
+
+        return connected;
+    }
+
+    /**
+     * Elige siempre la misma mitad para almacenar un double chest.
+     *
+     * No afecta visualmente al cofre; solamente evita guardar
+     * dos asociaciones diferentes para un mismo double chest.
+     */
+    private static net.minecraft.core.BlockPos getCanonicalChestPos(
+            ServerLevel level,
+            net.minecraft.core.BlockPos pos
+    ) {
+        net.minecraft.core.BlockPos connected =
+                getConnectedChestPos(
+                        level,
+                        pos
+                );
+
+        if (connected == null) {
+            return pos;
+        }
+
+        return Long.compare(
+                pos.asLong(),
+                connected.asLong()
+        ) <= 0
+                ? pos
+                : connected;
     }
 
     private static String normalizeId(String id) {
