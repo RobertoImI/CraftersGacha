@@ -299,7 +299,7 @@ public final class GachaSpinSession {
     private void prepareBackground() {
         ItemStack border =
                 new ItemStack(
-                        Items.GRAY_STAINED_GLASS_PANE
+                        Items.BLACK_STAINED_GLASS_PANE
                 );
 
         ItemStack marker =
