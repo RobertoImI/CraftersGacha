@@ -2,6 +2,7 @@ package org.crafterscr.craftersgacha.event;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -11,6 +12,8 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
+import net.neoforged.neoforge.event.level.ExplosionEvent;
+import net.neoforged.neoforge.event.level.PistonEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -308,6 +311,98 @@ public final class GachaEvents {
                 player.serverLevel(),
                 event.getPos()
         );
+    }
+
+    // =====================================================================
+    // Protección contra explosiones
+    // =====================================================================
+
+    /**
+     * ExplosionEvent.Detonate permite retirar bloques concretos de la lista
+     * de destrucción sin cancelar toda la explosión.
+     *
+     * Resultado:
+     * - TNT/creepers/etc. continúan explotando normalmente;
+     * - el cofre Gacha no se destruye;
+     * - el resto de bloques sí puede verse afectado.
+     */
+    @SubscribeEvent
+    public static void onExplosion(
+            ExplosionEvent.Detonate event
+    ) {
+        if (!(event.getLevel()
+                instanceof ServerLevel level)) {
+            return;
+        }
+
+        GachaManager manager =
+                GachaManager.get(
+                        level.getServer()
+                );
+
+        event.getAffectedBlocks()
+                .removeIf(pos ->
+                        manager.getChest(
+                                level,
+                                pos
+                        ) != null
+                );
+    }
+
+    // =====================================================================
+    // Protección contra pistones
+    // =====================================================================
+
+    /**
+     * Cancela el movimiento completo del pistón si entre los bloques
+     * que intentaría mover o destruir existe un cofre Gacha.
+     *
+     * getChest() también resuelve la otra mitad de un double chest,
+     * así que la protección cubre ambos lados.
+     */
+    @SubscribeEvent
+    public static void onPiston(
+            PistonEvent.Pre event
+    ) {
+        if (!(event.getLevel()
+                instanceof ServerLevel level)) {
+            return;
+        }
+
+        var resolver =
+                event.getStructureHelper();
+
+        if (resolver == null
+                || !resolver.resolve()) {
+            return;
+        }
+
+        GachaManager manager =
+                GachaManager.get(
+                        level.getServer()
+                );
+
+        for (var pos : resolver.getToPush()) {
+            if (manager.getChest(
+                    level,
+                    pos
+            ) != null) {
+
+                event.setCanceled(true);
+                return;
+            }
+        }
+
+        for (var pos : resolver.getToDestroy()) {
+            if (manager.getChest(
+                    level,
+                    pos
+            ) != null) {
+
+                event.setCanceled(true);
+                return;
+            }
+        }
     }
 
     // =====================================================================
