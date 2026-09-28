@@ -1906,6 +1906,34 @@ public final class GachaCommands {
     private static int reload(
             CommandSourceStack source
     ) {
+        /*
+         * Una tirada activa mantiene referencias a:
+         *
+         * - la definición del Gacha;
+         * - el premio seleccionado;
+         * - su contenedor visual.
+         *
+         * Recargar el JSON a mitad de una animación podría dejar
+         * dos versiones de la configuración coexistiendo en memoria.
+         * Por seguridad el reload se rechaza hasta que terminen.
+         */
+        int activeSpins =
+                GachaSpinManager.getActiveSpinCount();
+
+        if (activeSpins > 0) {
+            source.sendFailure(
+                    Component.literal(
+                            "No se puede usar /gacha reload mientras hay "
+                                    + activeSpins
+                                    + (activeSpins == 1
+                                    ? " tirada activa."
+                                    : " tiradas activas.")
+                    )
+            );
+
+            return 0;
+        }
+
         GachaManager manager =
                 GachaManager.get(
                         source.getServer()
