@@ -241,6 +241,20 @@ public final class GachaSpinManager {
         );
     }
 
+    /**
+     * Cantidad de tiradas que todavía están activas.
+     *
+     * Se utiliza para impedir /gacha reload mientras una ruleta
+     * mantiene referencias a la configuración actual.
+     */
+    public static int getActiveSpinCount() {
+        return SESSIONS.size();
+    }
+
+    public static boolean hasActiveSpins() {
+        return !SESSIONS.isEmpty();
+    }
+
     // =====================================================================
     // Llaves
     // =====================================================================
